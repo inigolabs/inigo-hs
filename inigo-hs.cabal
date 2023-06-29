@@ -1,0 +1,29 @@
+cabal-version:       2.2
+
+name:                inigo-hs
+version:             1.0.0
+license:             MIT
+license-file:        LICENSE
+author:              Andrii Soluk
+maintainer:          soluchok@inigo.io
+build-type:          Simple
+
+library
+  exposed-modules:     Inigo
+                     , FFI
+  build-depends:       base
+                        , bytestring
+                        , unordered-containers
+                        , http-types
+                        , aeson
+                        , wai
+                        , case-insensitive
+                        , unix
+  default-language:    Haskell2010
+  default-extensions:
+    TupleSections
+    ImportQualifiedPost
+    ScopedTypeVariables
+    ForeignFunctionInterface
+    RankNTypes
+  hs-source-dirs:      src-lib

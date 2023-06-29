@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-20.04
+    timeout-minutes: 400
+    steps:
+      - uses: thejerrybao/setup-swap-space@v1
+        with:
+          swap-space-path: /swapfile
+          swap-size-gb: 10
+          remove-existing-swap-files: true
+
+      - uses: actions/checkout@v3
+
+      - name: Set ENV vars
+        run: |
+          TAG=$(git describe --tags --always `git rev-list --tags --max-count=1`)
+          echo "IMAGE_TAG"=$TAG >> $GITHUB_ENV
+          echo "IMAGE_NAME_HASURA"=ghcr.io/inigolabs/inigo-hs/hasura >> $GITHUB_ENV
+
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Clone and patch
+        run: make clone-and-patch
+
+      - name: Set Node.js 16.x
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16.x
+
+      - name: Run install
+        uses: borales/actions-yarn@v4
+        with:
+          cmd: install
+          dir: 'graphql-engine/frontend'
+
+      - name: Build production bundle
+        uses: borales/actions-yarn@v4
+        with:
+          cmd: server-build:ce
+          dir: 'graphql-engine/frontend'
+
+      - name: Remove unnecessary files
+        run: find ./graphql-engine/frontend -mindepth 1 ! -regex '^./graphql-engine/frontend/dist\(/.*\)?' -delete
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push container image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME_HASURA }}:${{ env.IMAGE_TAG }}
+            ${{ env.IMAGE_NAME_HASURA }}:latest
+

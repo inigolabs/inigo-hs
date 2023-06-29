@@ -1,0 +1,101 @@
+diff --git a/cabal.project b/cabal.project
+index c1702f07ee..65e1672e73 100644
+--- a/cabal.project
++++ b/cabal.project
+@@ -32,6 +32,7 @@ jobs: $ncpus
+ packages: server
+ packages: server/lib/*/*.cabal
+ packages: server/forks/*/*.cabal
++packages: ../inigo-hs.cabal
+ 
+ -- TODO remove these when we are able:
+ allow-newer: ekg-core:base
+diff --git a/server/graphql-engine.cabal b/server/graphql-engine.cabal
+index 5c16cf3ebd..ee3c70ca81 100644
+--- a/server/graphql-engine.cabal
++++ b/server/graphql-engine.cabal
+@@ -260,6 +260,7 @@ common common-exe
+ 
+ common lib-depends
+   build-depends:       Spock-core
++                     , inigo-hs
+                      , aeson
+                      , aeson-casing
+                      , aeson-ordered
+@@ -1033,6 +1034,7 @@ executable graphql-engine
+   main-is:           Main.hs
+   build-depends:     base
+                    , graphql-engine
++                   , inigo-hs
+                    , ghc-debug-stub
+                    , bytestring
+                    , ekg-core
+diff --git a/server/src-exec/Main.hs b/server/src-exec/Main.hs
+index 717704e4f6..684c6a4530 100644
+--- a/server/src-exec/Main.hs
++++ b/server/src-exec/Main.hs
+@@ -3,6 +3,8 @@ module Main
+   )
+ where
+ 
++import FFI
++import Data.List (isPrefixOf)
+ import Control.Concurrent.Extended qualified as C
+ import Control.Exception
+ import Control.Monad.Trans.Managed (ManagedT (..), lowerManagedT)
+@@ -57,7 +59,9 @@ main = maybeWithGhcDebug $ monitorHeartbeatMain $ do
+     -- avoid accidentally reading directly from the operating system environment
+     -- variables.
+     clearEnvironment :: IO ()
+-    clearEnvironment = getEnvironment >>= traverse_ \(v, _) -> unsetEnv v
++    clearEnvironment = getEnvironment >>= traverse_ \(v, _) -> do
++        unless ("INIGO_" `isPrefixOf` v) $ do
++            unsetEnv v
+ 
+ runApp :: Env.Environment -> HGEOptions (ServeOptions Hasura) -> IO ()
+ runApp env (HGEOptions rci metadataDbUrl hgeCmd) = do
+@@ -115,6 +119,22 @@ runApp env (HGEOptions rci metadataDbUrl hgeCmd) = do
+           C.forkImmortal "ourIdleGC" logger
+             $ GC.ourIdleGC logger (seconds 0.3) (seconds 10) (seconds 60)
+ 
++        let token = fromMaybe "" $ lookup "INIGO_SERVICE_TOKEN" (Env.toList env)
++        let egressUrl = fromMaybe "" $ lookup "INIGO_EGRESS_URL" (Env.toList env)
++        let inigoLibPath = fromMaybe "" $ lookup "INIGO_LIB_PATH" (Env.toList env)
++
++        print inigoLibPath
++        load inigoLibPath
++
++        let inigoInstance = create token egressUrl
++        setInigo inigoInstance
++
++        let inigo :: Int = fromIntegral inigoInstance
++        when (inigo <= 0) $ do
++          err <- checkLastError
++          when (length err > 0) $ do
++            print err
++
+         runAppM appEnv do
+           appStateRef <- initialiseAppContext env serveOptions appInit
+           lowerManagedT
+diff --git a/server/src-lib/Hasura/Server/App.hs b/server/src-lib/Hasura/Server/App.hs
+index 324a856f5a..39ca673fd1 100644
+--- a/server/src-lib/Hasura/Server/App.hs
++++ b/server/src-lib/Hasura/Server/App.hs
+@@ -100,6 +100,7 @@ import Hasura.Server.Init
+ import Hasura.Server.Limits
+ import Hasura.Server.Logging
+ import Hasura.Server.Middleware (corsMiddleware)
++import Inigo (inigoMiddleware)
+ import Hasura.Server.OpenAPI (buildOpenAPI)
+ import Hasura.Server.Rest
+ import Hasura.Server.Types
+@@ -859,6 +860,9 @@ httpApp setupHook appStateRef AppEnv {..} consoleType ekgStore closeWebsocketsOn
+   Spock.middleware
+     $ corsMiddleware (acCorsPolicy <$> getAppContext appStateRef)
+ 
++  Spock.middleware
++    $ inigoMiddleware
++
+   -- API Console and Root Dir
+   serveApiConsole
+ 
